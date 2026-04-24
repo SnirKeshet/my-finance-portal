@@ -1,186 +1,147 @@
-/**
- * פרויקט: שרת נתונים פיננסיים מאוחד
- * מפתח: Expert Financial Systems Engineer
- * תיאור: שרת זה מקבל רשימת טיקרים, מושך נתונים היסטוריים ומאחד אותם לגיליון אחד.
- */
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Finance Portal | Snir Keshet</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;600;700;800&display=swap');
+        body { font-family: 'Assistant', sans-serif; }
+        
+        /* עיצוב מותאם אישית לאייקון לוח השנה ב-Dark Mode */
+        input[type="date"]::-webkit-calendar-picker-indicator {
+            filter: invert(1);
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-200 min-h-screen flex items-center justify-center p-4">
 
-/**
- * פונקציית doPost המטפלת בבקשות נכנסות (JSON)
- */
-function doPost(e) {
-  try {
-    // 1. קבלת הנתונים - טיפול ב-text/plain כדי למנוע בעיות CORS
-    const requestData = JSON.parse(e.postData.contents);
-    const { tickers, startDate, endDate, frequency } = requestData;
-    
-    // בדיקת תקינות בסיסית
-    if (!tickers || !Array.isArray(tickers) || !startDate || !endDate) {
-      throw new Error("Missing parameters: tickers (Array), startDate, or endDate.");
-    }
+    <div class="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden p-8 space-y-6">
+        
+        <header class="text-center space-y-2">
+            <h1 class="text-3xl font-extrabold text-blue-500 tracking-tight">Finance Portal</h1>
+            <p class="text-slate-500 text-sm font-medium italic">מערכת איחוד נתונים מבוססת Google Finance</p>
+        </header>
 
-    const freqMap = { "1d": "DAILY", "1wk": "WEEKLY", "1mo": "MONTHLY" };
-    const yahooFreq = frequency || "1d";
-    const googleFreq = freqMap[yahooFreq] || "DAILY";
+        <div class="space-y-4">
+            <div>
+                <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">סימולי מניות (למשל: AAPL, TSLA)</label>
+                <input type="text" id="tickers" value="AAPL, TSLA, NVDA" 
+                    class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all text-white placeholder-slate-600">
+            </div>
 
-    // אובייקט לאחסון הנתונים הממוזגים (Key = Date, Value = {Ticker: Price})
-    const masterData = {};
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">תאריך התחלה</label>
+                    <input type="date" id="startDate" 
+                        class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white transition-all focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">תאריך סיום</label>
+                    <input type="date" id="endDate" 
+                        class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white transition-all focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+            </div>
 
-    // 2. לולאה על כל הטיקרים ומשיכת נתונים
-    tickers.forEach(currentTicker => {
-      let rawData = [];
-      
-      try {
-        // ניסיון ראשון: Yahoo Finance עם Cookie/Crumb
-        console.log(`מנסה למשוך את ${currentTicker} מ-Yahoo...`);
-        rawData = fetchFromYahoo(currentTicker, startDate, endDate, yahooFreq);
-      } catch (err) {
-        // ניסיון שני: Fallback ל-GoogleFinance
-        console.warn(`Yahoo נכשל עבור ${currentTicker}. עובר ל-GoogleFinance. שגיאה: ${err.message}`);
-        rawData = fetchFromGoogleFinance(currentTicker, startDate, endDate, googleFreq);
-      }
+            <div>
+                <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">תדירות דגימה</label>
+                <select id="frequency" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="1d">יומי (Daily)</option>
+                    <option value="1wk">שבועי (Weekly)</option>
+                    <option value="1mo">חודשי (Monthly)</option>
+                </select>
+            </div>
 
-      // מיזוג הנתונים לתוך ה-masterData (Outer Join)
-      rawData.forEach(entry => {
-        const dKey = entry.date;
-        if (!masterData[dKey]) masterData[dKey] = {};
-        masterData[dKey][currentTicker] = entry.price;
-      });
-    });
+            <button id="submitBtn" onclick="generateReport()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl shadow-lg shadow-blue-900/20 transition-all active:scale-95 flex items-center justify-center gap-2">
+                <span id="btnText">צור גיליון נתונים</span>
+            </button>
+        </div>
 
-    // 3. בניית המערך הסופי וכתיבה לגיליון
-    const finalSheetUrl = createFinalSpreadsheet(tickers, masterData);
+        <div id="successArea" class="hidden animate-in fade-in zoom-in duration-300">
+            <a id="sheetLink" href="#" target="_blank" class="flex items-center justify-center gap-2 w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 rounded-xl shadow-xl transition-all">
+                <span>פתח את הגיליון ב-Google Sheets</span>
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" />
+                </svg>
+            </a>
+        </div>
 
-    // 4. החזרת תגובת JSON מוצלחת
-    return ContentService.createTextOutput(JSON.stringify({
-      status: "success",
-      sheetUrl: finalSheetUrl
-    })).setMimeType(ContentService.MimeType.JSON);
+        <div id="statusMessage" class="text-center text-xs font-mono text-slate-600 italic min-h-[1.5rem]"></div>
+    </div>
 
-  } catch (error) {
-    console.error(`שגיאה קריטית בשרת: ${error.toString()}`);
-    return ContentService.createTextOutput(JSON.stringify({
-      status: "error",
-      message: error.toString()
-    })).setMimeType(ContentService.MimeType.JSON);
-  }
-}
+    <script>
+        /**
+         * פונקציה לשליחת הבקשה לשרת ה-Apps Script
+         */
+        async function generateReport() {
+            // הכתובת החדשה שסיפקת מוטמעת כאן
+            const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwN-Z3GLGDCz3HZIlYNRejbYEJLxIzNazAN9v8hX9yEumtpT-cagEyM0BtdoUEZnxaA/exec";
+            
+            const btn = document.getElementById('submitBtn');
+            const btnText = document.getElementById('btnText');
+            const status = document.getElementById('statusMessage');
+            const successArea = document.getElementById('successArea');
+            const sheetLink = document.getElementById('sheetLink');
 
-/**
- * משיכת נתונים מ-Yahoo Finance באמצעות מנגנון Cookie/Crumb
- */
-function fetchFromYahoo(ticker, startDate, endDate, interval) {
-  const p1 = Math.floor(new Date(startDate).getTime() / 1000);
-  const p2 = Math.floor(new Date(endDate).getTime() / 1000);
-  
-  const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36";
+            // 1. ולידציה של הקלט
+            const tickers = document.getElementById('tickers').value.split(',').map(t => t.trim().toUpperCase());
+            const startDate = document.getElementById('startDate').value;
+            const endDate = document.getElementById('endDate').value;
+            const frequency = document.getElementById('frequency').value;
 
-  // א) השגת Cookie
-  const fcRes = UrlFetchApp.fetch("https://fc.yahoo.com", {
-    muteHttpExceptions: true,
-    headers: { "User-Agent": userAgent }
-  });
-  const cookie = fcRes.getAllHeaders()['Set-Cookie'];
+            if (!tickers[0] || !startDate || !endDate) {
+                status.innerText = "נא למלא את כל השדות בצורה תקינה.";
+                status.classList.add('text-red-500');
+                return;
+            }
 
-  // ב) השגת Crumb
-  const crumbRes = UrlFetchApp.fetch("https://query2.finance.yahoo.com/v1/test/getcrumb", {
-    headers: { "Cookie": cookie, "User-Agent": userAgent },
-    muteHttpExceptions: true
-  });
-  const crumb = crumbRes.getContentText();
+            // 2. עדכון הממשק למצב טעינה
+            btn.disabled = true;
+            btnText.innerText = "מעבד נתונים...";
+            btn.classList.replace('bg-blue-600', 'bg-slate-700');
+            status.innerText = "גוגל אוספת וממזגת את הנתונים... (כ-15 שניות)";
+            status.classList.remove('text-red-500');
+            successArea.classList.add('hidden');
 
-  // ג) הורדת ה-CSV
-  const downloadUrl = `https://query1.finance.yahoo.com/v7/finance/download/${ticker}?period1=${p1}&period2=${p2}&interval=${interval}&events=history&crumb=${crumb}`;
-  const response = UrlFetchApp.fetch(downloadUrl, {
-    headers: { "Cookie": cookie, "User-Agent": userAgent },
-    muteHttpExceptions: true
-  });
+            // 3. הכנת ה-Payload
+            const payload = {
+                tickers: tickers,
+                startDate: startDate,
+                endDate: endDate,
+                frequency: frequency
+            };
 
-  if (response.getResponseCode() !== 200) throw new Error(`Yahoo HTTP Error ${response.getResponseCode()}`);
+            try {
+                // 4. שליחת ה-POST בפורמט text/plain למניעת שגיאות CORS
+                const response = await fetch(WEB_APP_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify(payload)
+                });
 
-  const csvData = Utilities.parseCsv(response.getContentText());
-  const header = csvData[0];
-  const dateIdx = header.indexOf("Date");
-  const adjCloseIdx = header.indexOf("Adj Close") !== -1 ? header.indexOf("Adj Close") : header.indexOf("Close");
+                const result = await response.json();
 
-  return csvData.slice(1).map(row => ({
-    date: row[dateIdx],
-    price: parseFloat(row[adjCloseIdx])
-  })).filter(item => !isNaN(item.price));
-}
+                // 5. ניתוח התוצאה
+                if (result.status === "success") {
+                    status.innerText = "הדוח נוצר בהצלחה!";
+                    sheetLink.href = result.sheetUrl;
+                    successArea.classList.remove('hidden');
+                    btnText.innerText = "הפעולה הושלמה";
+                } else {
+                    throw new Error(result.message || "שגיאה בשרת גוגל");
+                }
 
-/**
- * פונקציית Fallback: שימוש ב-GOOGLEFINANCE דרך גיליון זמני
- */
-function fetchFromGoogleFinance(ticker, startDate, endDate, interval) {
-  const tempSS = SpreadsheetApp.create(`Temp_${ticker}_${Date.now()}`);
-  const sheet = tempSS.getSheets()[0];
-  
-  // המרת תאריכים לפורמט נוסחה
-  const start = startDate.replace(/-/g, ",");
-  const end = endDate.replace(/-/g, ",");
-  
-  const formula = `=GOOGLEFINANCE("${ticker}", "price", DATE(${start}), DATE(${end}), "${interval}")`;
-  sheet.getRange(1, 1).setFormula(formula);
-  
-  // המתנה לחישוב שרתים
-  SpreadsheetApp.flush();
-  Utilities.sleep(2000); 
-  
-  const values = sheet.getDataRange().getValues();
-  
-  // ניקוי הקובץ הזמני
-  DriveApp.getFileById(tempSS.getId()).setTrashed(true);
-  
-  // עיבוד הנתונים (דילוג על כותרות)
-  return values.slice(1).map(row => {
-    if (!(row[0] instanceof Date)) return null;
-    return {
-      date: Utilities.formatDate(row[0], Session.getScriptTimeZone(), "yyyy-MM-dd"),
-      price: parseFloat(row[1])
-    };
-  }).filter(item => item !== null && !isNaN(item.price));
-}
-
-/**
- * יצירת הגיליון הסופי, מיזוג הנתונים והגדרת הרשאות ציבוריות
- */
-function createFinalSpreadsheet(tickers, masterData) {
-  // מיון תאריכים בסדר כרונולוגי
-  const sortedDates = Object.keys(masterData).sort((a, b) => new Date(a) - new Date(b));
-  
-  // בניית מטריצת הנתונים (Header + Rows)
-  const header = ["Date", ...tickers];
-  const rows = sortedDates.map(date => {
-    const row = [date];
-    tickers.forEach(t => {
-      row.push(masterData[date][t] || ""); // השארת תא ריק אם אין נתון
-    });
-    return row;
-  });
-
-  // יצירת הקובץ
-  const ssName = `Financial Export - ${tickers.join(", ")} (${new Date().toLocaleDateString()})`;
-  const ss = SpreadsheetApp.create(ssName);
-  const sheet = ss.getSheets()[0];
-  
-  // כתיבת הנתונים
-  sheet.getRange(1, 1, rows.length + 1, header.length).setValues([header, ...rows]);
-  
-  // עיצוב בסיסי (הקפאת שורה ראשונה והדגשה)
-  sheet.setFrozenRows(1);
-  sheet.getRange(1, 1, 1, header.length).setFontWeight("bold").setBackground("#f3f3f3");
-
-  // 5. הגדרת הרשאות Anyone with link can View
-  const file = DriveApp.getFileById(ss.getId());
-  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-
-  return ss.getUrl();
-}
-
-/**
- * פונקציית doGet לבדיקת זמינות השרת
- */
-function doGet() {
-  return ContentService.createTextOutput("Finance Server is Running. Ready for POST requests.")
-    .setMimeType(ContentService.MimeType.TEXT);
-}
+            } catch (error) {
+                console.error("Fetch Error:", error);
+                status.innerText = "שגיאה: " + error.message;
+                status.classList.add('text-red-500');
+                btnText.innerText = "נסה שוב";
+                btn.disabled = false;
+                btn.classList.replace('bg-slate-700', 'bg-blue-600');
+            }
+        }
+    </script>
+</body>
+</html>
