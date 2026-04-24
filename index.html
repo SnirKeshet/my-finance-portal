@@ -1,97 +1,186 @@
-<!DOCTYPE html>
-<html lang="he" dir="rtl">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Snir Finance Portal</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Assistant:wght@400;700&display=swap');
-        body { font-family: 'Assistant', sans-serif; background-color: #020617; }
-    </style>
-</head>
-<body class="text-slate-200 min-h-screen flex items-center justify-center p-4">
+/**
+ * פרויקט: שרת נתונים פיננסיים מאוחד
+ * מפתח: Expert Financial Systems Engineer
+ * תיאור: שרת זה מקבל רשימת טיקרים, מושך נתונים היסטוריים ומאחד אותם לגיליון אחד.
+ */
 
-    <div class="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl p-8 space-y-6">
-        <div class="text-center">
-            <h1 class="text-3xl font-extrabold text-blue-500">Finance Portal</h1>
-            <p class="text-slate-500 text-sm mt-1 font-medium">מיזוג נתונים מאוחד (Yahoo/Google)</p>
-        </div>
+/**
+ * פונקציית doPost המטפלת בבקשות נכנסות (JSON)
+ */
+function doPost(e) {
+  try {
+    // 1. קבלת הנתונים - טיפול ב-text/plain כדי למנוע בעיות CORS
+    const requestData = JSON.parse(e.postData.contents);
+    const { tickers, startDate, endDate, frequency } = requestData;
+    
+    // בדיקת תקינות בסיסית
+    if (!tickers || !Array.isArray(tickers) || !startDate || !endDate) {
+      throw new Error("Missing parameters: tickers (Array), startDate, or endDate.");
+    }
 
-        <div class="space-y-4">
-            <div>
-                <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">סימולי מניות</label>
-                <input type="text" id="tickers" value="AAPL, TSLA, NVDA" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all">
-            </div>
+    const freqMap = { "1d": "DAILY", "1wk": "WEEKLY", "1mo": "MONTHLY" };
+    const yahooFreq = frequency || "1d";
+    const googleFreq = freqMap[yahooFreq] || "DAILY";
 
-            <div class="grid grid-cols-2 gap-4">
-                <input type="date" id="start" class="bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm">
-                <input type="date" id="end" class="bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm">
-            </div>
+    // אובייקט לאחסון הנתונים הממוזגים (Key = Date, Value = {Ticker: Price})
+    const masterData = {};
 
-            <button id="btn" onclick="run()" class="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-xl font-bold shadow-lg transition-all active:scale-95">
-                ייצא נתונים לגיליון
-            </button>
-        </div>
+    // 2. לולאה על כל הטיקרים ומשיכת נתונים
+    tickers.forEach(currentTicker => {
+      let rawData = [];
+      
+      try {
+        // ניסיון ראשון: Yahoo Finance עם Cookie/Crumb
+        console.log(`מנסה למשוך את ${currentTicker} מ-Yahoo...`);
+        rawData = fetchFromYahoo(currentTicker, startDate, endDate, yahooFreq);
+      } catch (err) {
+        // ניסיון שני: Fallback ל-GoogleFinance
+        console.warn(`Yahoo נכשל עבור ${currentTicker}. עובר ל-GoogleFinance. שגיאה: ${err.message}`);
+        rawData = fetchFromGoogleFinance(currentTicker, startDate, endDate, googleFreq);
+      }
 
-        <div id="status" class="text-center text-xs text-slate-600 font-mono italic min-h-[1rem]"></div>
-        
-        <div id="result" class="hidden animate-bounce">
-            <a id="link" href="#" target="_blank" class="flex items-center justify-center gap-2 w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 rounded-xl shadow-xl">
-                פתח את הגיליון החדש
-            </a>
-        </div>
-    </div>
+      // מיזוג הנתונים לתוך ה-masterData (Outer Join)
+      rawData.forEach(entry => {
+        const dKey = entry.date;
+        if (!masterData[dKey]) masterData[dKey] = {};
+        masterData[dKey][currentTicker] = entry.price;
+      });
+    });
 
-    <script>
-        async function run() {
-            // הקישור שסיפקת הוטמע כאן:
-            const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx2DEqyXxbrOAqaQXNFS1FV7NkgBufOQX9HDHbidMvcy65LmYaLA3tt3Sxuwapqz3sJ/exec";
-            
-            const btn = document.getElementById('btn');
-            const status = document.getElementById('status');
-            const resultDiv = document.getElementById('result');
+    // 3. בניית המערך הסופי וכתיבה לגיליון
+    const finalSheetUrl = createFinalSpreadsheet(tickers, masterData);
 
-            const payload = {
-                tickers: document.getElementById('tickers').value.split(',').map(t => t.trim()),
-                startDate: document.getElementById('start').value,
-                endDate: document.getElementById('end').value,
-                frequency: '1d'
-            };
+    // 4. החזרת תגובת JSON מוצלחת
+    return ContentService.createTextOutput(JSON.stringify({
+      status: "success",
+      sheetUrl: finalSheetUrl
+    })).setMimeType(ContentService.MimeType.JSON);
 
-            if (!payload.startDate || !payload.endDate) {
-                status.innerText = "נא לבחור תאריכים";
-                return;
-            }
+  } catch (error) {
+    console.error(`שגיאה קריטית בשרת: ${error.toString()}`);
+    return ContentService.createTextOutput(JSON.stringify({
+      status: "error",
+      message: error.toString()
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+}
 
-            btn.disabled = true;
-            btn.innerText = "מעבד נתונים...";
-            status.innerText = "המערכת מנסה למשוך נתונים (Yahoo -> Google Fallback)...";
-            resultDiv.classList.add('hidden');
+/**
+ * משיכת נתונים מ-Yahoo Finance באמצעות מנגנון Cookie/Crumb
+ */
+function fetchFromYahoo(ticker, startDate, endDate, interval) {
+  const p1 = Math.floor(new Date(startDate).getTime() / 1000);
+  const p2 = Math.floor(new Date(endDate).getTime() / 1000);
+  
+  const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36";
 
-            try {
-                const response = await fetch(WEB_APP_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify(payload)
-                });
+  // א) השגת Cookie
+  const fcRes = UrlFetchApp.fetch("https://fc.yahoo.com", {
+    muteHttpExceptions: true,
+    headers: { "User-Agent": userAgent }
+  });
+  const cookie = fcRes.getAllHeaders()['Set-Cookie'];
 
-                const data = await response.json();
+  // ב) השגת Crumb
+  const crumbRes = UrlFetchApp.fetch("https://query2.finance.yahoo.com/v1/test/getcrumb", {
+    headers: { "Cookie": cookie, "User-Agent": userAgent },
+    muteHttpExceptions: true
+  });
+  const crumb = crumbRes.getContentText();
 
-                if (data.status === "success") {
-                    document.getElementById('link').href = data.sheetUrl;
-                    resultDiv.classList.remove('hidden');
-                    status.innerText = "הפעולה הושלמה!";
-                } else {
-                    status.innerText = "שגיאה: " + data.message;
-                }
-            } catch (e) {
-                status.innerText = "שגיאת תקשורת. וודא שה-Web App פורסם כ-Anyone.";
-            } finally {
-                btn.disabled = false;
-                btn.innerText = "ייצא נתונים לגיליון";
-            }
-        }
-    </script>
-</body>
-</html>
+  // ג) הורדת ה-CSV
+  const downloadUrl = `https://query1.finance.yahoo.com/v7/finance/download/${ticker}?period1=${p1}&period2=${p2}&interval=${interval}&events=history&crumb=${crumb}`;
+  const response = UrlFetchApp.fetch(downloadUrl, {
+    headers: { "Cookie": cookie, "User-Agent": userAgent },
+    muteHttpExceptions: true
+  });
+
+  if (response.getResponseCode() !== 200) throw new Error(`Yahoo HTTP Error ${response.getResponseCode()}`);
+
+  const csvData = Utilities.parseCsv(response.getContentText());
+  const header = csvData[0];
+  const dateIdx = header.indexOf("Date");
+  const adjCloseIdx = header.indexOf("Adj Close") !== -1 ? header.indexOf("Adj Close") : header.indexOf("Close");
+
+  return csvData.slice(1).map(row => ({
+    date: row[dateIdx],
+    price: parseFloat(row[adjCloseIdx])
+  })).filter(item => !isNaN(item.price));
+}
+
+/**
+ * פונקציית Fallback: שימוש ב-GOOGLEFINANCE דרך גיליון זמני
+ */
+function fetchFromGoogleFinance(ticker, startDate, endDate, interval) {
+  const tempSS = SpreadsheetApp.create(`Temp_${ticker}_${Date.now()}`);
+  const sheet = tempSS.getSheets()[0];
+  
+  // המרת תאריכים לפורמט נוסחה
+  const start = startDate.replace(/-/g, ",");
+  const end = endDate.replace(/-/g, ",");
+  
+  const formula = `=GOOGLEFINANCE("${ticker}", "price", DATE(${start}), DATE(${end}), "${interval}")`;
+  sheet.getRange(1, 1).setFormula(formula);
+  
+  // המתנה לחישוב שרתים
+  SpreadsheetApp.flush();
+  Utilities.sleep(2000); 
+  
+  const values = sheet.getDataRange().getValues();
+  
+  // ניקוי הקובץ הזמני
+  DriveApp.getFileById(tempSS.getId()).setTrashed(true);
+  
+  // עיבוד הנתונים (דילוג על כותרות)
+  return values.slice(1).map(row => {
+    if (!(row[0] instanceof Date)) return null;
+    return {
+      date: Utilities.formatDate(row[0], Session.getScriptTimeZone(), "yyyy-MM-dd"),
+      price: parseFloat(row[1])
+    };
+  }).filter(item => item !== null && !isNaN(item.price));
+}
+
+/**
+ * יצירת הגיליון הסופי, מיזוג הנתונים והגדרת הרשאות ציבוריות
+ */
+function createFinalSpreadsheet(tickers, masterData) {
+  // מיון תאריכים בסדר כרונולוגי
+  const sortedDates = Object.keys(masterData).sort((a, b) => new Date(a) - new Date(b));
+  
+  // בניית מטריצת הנתונים (Header + Rows)
+  const header = ["Date", ...tickers];
+  const rows = sortedDates.map(date => {
+    const row = [date];
+    tickers.forEach(t => {
+      row.push(masterData[date][t] || ""); // השארת תא ריק אם אין נתון
+    });
+    return row;
+  });
+
+  // יצירת הקובץ
+  const ssName = `Financial Export - ${tickers.join(", ")} (${new Date().toLocaleDateString()})`;
+  const ss = SpreadsheetApp.create(ssName);
+  const sheet = ss.getSheets()[0];
+  
+  // כתיבת הנתונים
+  sheet.getRange(1, 1, rows.length + 1, header.length).setValues([header, ...rows]);
+  
+  // עיצוב בסיסי (הקפאת שורה ראשונה והדגשה)
+  sheet.setFrozenRows(1);
+  sheet.getRange(1, 1, 1, header.length).setFontWeight("bold").setBackground("#f3f3f3");
+
+  // 5. הגדרת הרשאות Anyone with link can View
+  const file = DriveApp.getFileById(ss.getId());
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+  return ss.getUrl();
+}
+
+/**
+ * פונקציית doGet לבדיקת זמינות השרת
+ */
+function doGet() {
+  return ContentService.createTextOutput("Finance Server is Running. Ready for POST requests.")
+    .setMimeType(ContentService.MimeType.TEXT);
+}
