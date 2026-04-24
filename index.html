@@ -1,94 +1,97 @@
-function doPost(e) {
-  try {
-    const data = JSON.parse(e.postData.contents);
-    const { tickers, startDate, endDate, frequency = '1d' } = data;
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Snir Finance Portal</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Assistant:wght@400;700&display=swap');
+        body { font-family: 'Assistant', sans-serif; background-color: #020617; }
+    </style>
+</head>
+<body class="text-slate-200 min-h-screen flex items-center justify-center p-4">
 
-    // המרת תאריכים לפורמט ש-Yahoo מבינה
-    const p1 = Math.floor(new Date(startDate).getTime() / 1000);
-    const p2 = Math.floor(new Date(endDate).getTime() / 1000);
+    <div class="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl p-8 space-y-6">
+        <div class="text-center">
+            <h1 class="text-3xl font-extrabold text-blue-500">Finance Portal</h1>
+            <p class="text-slate-500 text-sm mt-1 font-medium">מיזוג נתונים מאוחד (Yahoo/Google)</p>
+        </div>
 
-    const masterData = {};
-    const processedTickers = [];
+        <div class="space-y-4">
+            <div>
+                <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">סימולי מניות</label>
+                <input type="text" id="tickers" value="AAPL, TSLA, NVDA" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all">
+            </div>
 
-    tickers.forEach(ticker => {
-      const csvText = fetchFromYahoo(ticker, p1, p2, frequency);
-      if (csvText) {
-        const rows = Utilities.parseCsv(csvText);
-        if (rows.length > 1) {
-          extractData(ticker, rows, masterData);
-          processedTickers.push(ticker);
+            <div class="grid grid-cols-2 gap-4">
+                <input type="date" id="start" class="bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm">
+                <input type="date" id="end" class="bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm">
+            </div>
+
+            <button id="btn" onclick="run()" class="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-xl font-bold shadow-lg transition-all active:scale-95">
+                ייצא נתונים לגיליון
+            </button>
+        </div>
+
+        <div id="status" class="text-center text-xs text-slate-600 font-mono italic min-h-[1rem]"></div>
+        
+        <div id="result" class="hidden animate-bounce">
+            <a id="link" href="#" target="_blank" class="flex items-center justify-center gap-2 w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 rounded-xl shadow-xl">
+                פתח את הגיליון החדש
+            </a>
+        </div>
+    </div>
+
+    <script>
+        async function run() {
+            // הקישור שסיפקת הוטמע כאן:
+            const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx2DEqyXxbrOAqaQXNFS1FV7NkgBufOQX9HDHbidMvcy65LmYaLA3tt3Sxuwapqz3sJ/exec";
+            
+            const btn = document.getElementById('btn');
+            const status = document.getElementById('status');
+            const resultDiv = document.getElementById('result');
+
+            const payload = {
+                tickers: document.getElementById('tickers').value.split(',').map(t => t.trim()),
+                startDate: document.getElementById('start').value,
+                endDate: document.getElementById('end').value,
+                frequency: '1d'
+            };
+
+            if (!payload.startDate || !payload.endDate) {
+                status.innerText = "נא לבחור תאריכים";
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerText = "מעבד נתונים...";
+            status.innerText = "המערכת מנסה למשוך נתונים (Yahoo -> Google Fallback)...";
+            resultDiv.classList.add('hidden');
+
+            try {
+                const response = await fetch(WEB_APP_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+
+                if (data.status === "success") {
+                    document.getElementById('link').href = data.sheetUrl;
+                    resultDiv.classList.remove('hidden');
+                    status.innerText = "הפעולה הושלמה!";
+                } else {
+                    status.innerText = "שגיאה: " + data.message;
+                }
+            } catch (e) {
+                status.innerText = "שגיאת תקשורת. וודא שה-Web App פורסם כ-Anyone.";
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "ייצא נתונים לגיליון";
+            }
         }
-      }
-    });
-
-    if (processedTickers.length === 0) throw new Error("לא נמצאו נתונים עבור הטיקרים שנבחרו");
-
-    // בניית המערך הסופי לגיליון
-    const finalTable = prepareTable(processedTickers, masterData);
-
-    // יצירת הקובץ
-    const ss = SpreadsheetApp.create("דוח מניות - " + processedTickers.join(", "));
-    const sheet = ss.getSheets()[0];
-    sheet.getRange(1, 1, finalTable.length, finalTable[0].length).setValues(finalTable);
-
-    // שיתוף הקובץ
-    const file = DriveApp.getFileById(ss.getId());
-    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-
-    return ContentService.createTextOutput(JSON.stringify({
-      status: "success",
-      sheetUrl: ss.getUrl()
-    })).setMimeType(ContentService.MimeType.JSON);
-
-  } catch (err) {
-    return ContentService.createTextOutput(JSON.stringify({
-      status: "error",
-      message: err.toString()
-    })).setMimeType(ContentService.MimeType.JSON);
-  }
-}
-
-function fetchFromYahoo(ticker, p1, p2, interval) {
-  const url = `https://query1.finance.yahoo.com/v7/finance/download/${ticker}?period1=${p1}&period2=${p2}&interval=${interval}&events=history&includeAdjustedClose=true`;
-  
-  const options = {
-    muteHttpExceptions: true,
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
-  };
-
-  const response = UrlFetchApp.fetch(url, options);
-  return response.getResponseCode() === 200 ? response.getContentText() : null;
-}
-
-function extractData(ticker, csvRows, masterData) {
-  const headers = csvRows[0];
-  const dateIdx = headers.indexOf("Date");
-  // מחפש Adj Close, ואם אין (לפעמים Yahoo משנים שמות) לוקח את Close הרגיל
-  let priceIdx = headers.indexOf("Adj Close");
-  if (priceIdx === -1) priceIdx = headers.indexOf("Close");
-
-  for (let i = 1; i < csvRows.length; i++) {
-    const row = csvRows[i];
-    const date = row[dateIdx];
-    const price = row[priceIdx];
-    if (date && price && price !== "null") {
-      if (!masterData[date]) masterData[date] = {};
-      masterData[date][ticker] = price;
-    }
-  }
-}
-
-function prepareTable(tickers, masterData) {
-  const sortedDates = Object.keys(masterData).sort((a, b) => new Date(a) - new Date(b));
-  const header = ["Date", ...tickers];
-  const table = [header];
-
-  sortedDates.forEach(date => {
-    const row = [date];
-    tickers.forEach(t => row.push(masterData[date][t] || ""));
-    table.push(row);
-  });
-  return table;
-}
+    </script>
+</body>
+</html>
